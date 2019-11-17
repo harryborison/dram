@@ -88,6 +88,7 @@ struct bank_t
    unsigned int RTPc; // read to precharge
    unsigned int RFC;
    unsigned int REFi;
+   unsigned int refresh_pending;
    unsigned char rw;    //is the bank reading or writing?
    unsigned char state; //is the bank active or idle?
    unsigned int curr_row;

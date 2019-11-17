@@ -123,6 +123,7 @@ dram_t::dram_t( unsigned int partition_id, const struct memory_config *config, m
       bk[i]->state = BANK_IDLE;
       bk[i]->bkgrpindex = i/(m_config->nbk/m_config->nbkgrp);
       bk[i]->REFi = m_config->tREFi;
+      bk[i]->refresh_pending = 0;
    }
    prio = 0;
 
@@ -317,7 +318,6 @@ void dram_t::scheduler_fifo()
 
 void dram_t::cycle()
 {
-   printf("\nCycle %lld\n",gpu_tot_sim_cycle + gpu_sim_cycle);
    if( !returnq->full() ) {
        dram_req_t *cmd = rwq->pop();
        if( cmd ) {
@@ -440,6 +440,31 @@ void dram_t::cycle()
    banks_time_ready += memory_Pending_ready;
    if(memory_Pending_ready >0)
 	   banks_access_ready_total++;
+
+    for (unsigned j=0;j<m_config->nbk;j++)
+    {	
+        if(!bk[j]->mrq && bk[j]->refresh_pending > 0)
+        {
+		if(bk[j]->refresh_pending > m_config->tREFi)
+		{
+			bk[j] ->RFC = m_config->tRFC + (bk[j]->refresh_pending/m_config->tREFi)*m_config->tRFC;
+		}
+		else
+		{
+                bk[j]->RFC = m_config->tRFC;
+		}
+		printf("\nRFC Insert %d \n",bk[j]->RFC);
+                bk[j]->refresh_pending = 0;
+        }
+	else if(bk[j]->mrq && bk[j]->refresh_pending >0 ) // need refresh but not able to start
+	{
+		bk[j]->refresh_pending++;
+
+	}
+
+
+    }
+
    ///////////////////////////////////////////////////////////////////////////////////
 
    bool issued_col_cmd = false;
@@ -630,6 +655,7 @@ void dram_t::cycle()
       DEC2ZERO(bk[j]->WTPc);
       DEC2ZERO(bk[j]->RTPc);
       DEC2ZERO(bk[j]->REFi);
+
       if(bk[j]->state == BANK_REFRESH) 
 	{
 	  DEC2ZERO(bk[j]->RFC);
@@ -640,12 +666,20 @@ void dram_t::cycle()
 	   DEC2ZERO(bkgrp[j]->RTPLc);
    }
    for (unsigned j=0; j<m_config->nbk;j++) {
-	if(bk[j]->REFi == 0) // start refresh
+	if(bk[j]->REFi == 0 ) // start refresh
 	{
-		//printf("\nbk[%d] Refresh needed \n",j);
+		printf("\n %lld bk[%d] Refresh needed \n",gpu_tot_sim_cycle+gpu_sim_cycle,j);
 		bk[j]->REFi = m_config->tREFi;
-		bk[j]->RFC = m_config->tRFC;
+		bk[j]->refresh_pending ++;
 	}
+	
+//	if(!bk[j]->mrq && bk[j]->refresh_pending > 0)
+//	{
+//		bk[j]->RFC = m_config->tRFC;
+//		bk[j]->refresh_pending = 0;
+//	}
+
+
    }
 
 #ifdef DRAM_VISUALIZE
@@ -689,7 +723,7 @@ bool dram_t::issue_col_command(int j)
 
 #ifdef DRAM_VERIFY
           PRINT_CYCLE=1;
-          printf("\tRD  Bk:%d Row:%03x Col:%03x \n",
+          printf("\t%lld RD  Bk:%d Row:%03x Col:%03x \n",gpu_tot_sim_cycle+gpu_sim_cycle,
                  j, bk[j]->curr_row,
                  bk[j]->mrq->col + bk[j]->mrq->txbytes - m_config->dram_atom_size);
 #endif
@@ -726,8 +760,8 @@ bool dram_t::issue_col_command(int j)
           bwutil_partial += m_config->BL/m_config->data_command_freq_ratio;
 #ifdef DRAM_VERIFY
           PRINT_CYCLE=1;
-          printf("\tWR  Bk:%d Row:%03x Col:%03x \n",
-                 j, bk[j]->curr_row,
+          printf("\t%lld WR  Bk:%d Row:%03x Col:%03x \n",gpu_sim_cycle+ gpu_tot_sim_cycle
+                 ,j, bk[j]->curr_row,
                  bk[j]->mrq->col + bk[j]->mrq->txbytes - m_config->dram_atom_size);
 #endif
           // transfer done
@@ -766,7 +800,7 @@ bool dram_t::issue_refresh_command(int j)
                		(bk[j]->state == BANK_IDLE) &&
                		!bk[j]->RPc && !bk[j]->RCc)
 		{
-			//printf("\nBK[%d] start Refresh(State changed to Refresh)\n",j);
+			printf("\n%lld BK[%d] start Refresh(State changed to Refresh)\n",gpu_sim_cycle+gpu_tot_sim_cycle,j);
 			bk[j]->state = BANK_REFRESH;
 		}
 		else
@@ -792,8 +826,8 @@ bool dram_t::issue_row_command(int j)
                !bk[j]->RPc && !bk[j]->RCc) { // refresh condition 2
 #ifdef DRAM_VERIFY
           PRINT_CYCLE=1;
-          printf("\tACT BK:%d NewRow:%03x From:%03x \n",
-                 j,bk[j]->mrq->row,bk[j]->curr_row);
+          printf("\t%lld ACT BK:%d NewRow:%03x From:%03x \n",gpu_sim_cycle+gpu_tot_sim_cycle
+                 ,j,bk[j]->mrq->row,bk[j]->curr_row);
 #endif
           // activate the row with current memory request
 	total_cnt++;
@@ -854,7 +888,7 @@ bool dram_t::issue_row_command(int j)
           n_pre_partial++;
 #ifdef DRAM_VERIFY
           PRINT_CYCLE=1;
-          printf("\tPRE BK:%d Row:%03x \n", j,bk[j]->curr_row);
+          printf("\t%lld PRE BK:%d Row:%03x \n",gpu_tot_sim_cycle+gpu_sim_cycle, j,bk[j]->curr_row);
 #endif
        }
     }
